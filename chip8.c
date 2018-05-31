@@ -4,8 +4,6 @@
 typedef unsigned char BYTE;
 typedef unsigned short int WORD;
 
-//WORD opcode;
-
 BYTE memory[0xFFF];
 BYTE V[16];
 WORD I;
@@ -16,11 +14,22 @@ WORD stack[16];
 WORD sp;
 BYTE key[16];
 
+int timer = 0;
+
 WORD getNextOpcode();
 
 int getVnum(WORD opcode, int mask, int shift) {
   int vNum = opcode & mask;
   return vNum >> shift;
+}
+
+int getDelay() {
+  return timer;
+}
+
+void returnFromSubroutine(WORD opcode) {
+  pc = stack[--sp];
+  printf("Return new pc is %#06x\n", pc);
 }
 
 // 1NNN goto NNN;
@@ -36,12 +45,45 @@ void call(WORD opcode) {
   pc = opcode & 0xFFF;
 }
 
+//3XNN	Cond	if(Vx==NN)	Skips the next instruction if VX equals NN. (Usually the next instruction is a jump to skip a code block)
+void ifVxEqualsNN(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  printf("V%d if(%d==%#04x)\n", vX, V[vX], opcode & 0xFF);
+  if(V[vX] == (opcode & 0xFF)) {
+    pc += 2;
+  }
+}
+
 // 6XNN	Const	Vx = NN
 void setVxToNN(WORD opcode) {
   int vX = getVnum(opcode, 0xF00, 8);
   printf("set V%d to %#04x\n", vX, opcode & 0xFF);
   V[vX] = opcode & 0xFF;
 }
+
+// 7XNN
+void addNNToVx(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  printf("add V%d to %#04x\n", vX, opcode & 0xFF);
+  V[vX] += (opcode & 0xFF);
+}
+//
+// 8XY1	BitOp	Vx=Vx|Vy	Sets VX to VX or VY. (Bitwise OR operation)
+void setVxOrVy(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  int vY = getVnum(opcode, 0x00F0, 4);
+  printf("set V%d to V%d | V%d\n", vX, vX, vY);
+  V[vX] = V[vX] | V[vY];
+}
+
+// 8XY2	BitOp	Vx=Vx&Vy	Sets VX to VX and VY. (Bitwise AND operation)
+void setVxToVxAndVy(opcode) {
+    int vX = getVnum(opcode, 0X0F00, 8);
+    int vY = getVnum(opcode, 0X00F0, 4);
+    printf("set V%d to V%d and V%d\n", vX, V[vX], V[vY]);
+    V[vX] = V[vX] & V[vY];
+}
+
 // ANNN	MEM	I = NNN	Sets I to the address NNN.
 void setIToNNN(WORD opcode) {
   printf("Set I to %#05x\n",  opcode & 0xFFF);
@@ -57,16 +99,16 @@ void dxyn(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
   int vY = getVnum(opcode, 0x00F0, 4);
   int height = opcode & 0x000F;
-  printf("Drawing at X:%d Y:%d height:%d\n", vX, vY, height);
+  printf("Drawing at X:%d Y:%d height:%d from registers V%d, V%d\n", V[vX], V[vY], height, vX, vY);
   for (int yline = 0; yline < height; yline++) {
     BYTE line = memory[I+yline];
     // get each pixel in 8 bit line;
-    for (int xRow =0; xRow < 8; xRow++) {
-      int mask = 1 << (7 - xRow);
+    for (int xColumn = 0; xColumn < 8; xColumn++) {
+      int mask = 1 << (7 - xColumn);
       int value = (line & mask);
       if(value) {
-        int x = vX + xRow;
-        int y = vY + yline;
+        int x = V[vX] + xColumn;
+        int y = V[vY] + yline;
         if(videoMemory[x][y]) {
           V[0xF] = 1;
         }
@@ -88,6 +130,27 @@ void dxyn(WORD opcode) {
     printf("\n");
   }
   printf("\n");
+}
+
+//EX9E	KeyOp	if(key()==Vx)	Skips the next instruction if the key stored in VX
+//is pressed. (Usually the next instruction is a jump to skip a code block)
+void skipIfKeyPressed(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  printf("Skipping if key in V%d is %d\n", vX, V[vX]);
+}
+
+// FX07	Timer	Vx = get_delay()	Sets VX to the value of the delay timer.
+void setVxToDelay(WORD opcode) {
+  int vXi = getVnum(opcode, 0x0F00, 8);
+  V[vXi] = getDelay();
+  printf("Setting V%d to value of delay timer %d\n", vXi, V[vXi]);
+}
+
+// FX15	Timer	delay_timer(Vx)	Sets the delay timer to VX.
+void setDelayTimer(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  printf("Register V%d setting timer delay to %d\n", vX, V[vX]);
+  timer = V[vX];
 }
 
 //FX29	MEM	I=sprite_addr[Vx]	Sets I to the location of the sprite for the character in VX. Characters 0-F (in hexadecimal) are represented by a 4x5 font.
@@ -120,18 +183,104 @@ void registerLoad(WORD opcode) {
   }
 }
 
-void setVxOrVy(WORD opcode) {
-  BYTE vNum = (opcode & 0xF00) >> 1;
-  printf("set V%#03x to V%#03x | V%#03x\n", vNum,  opcode & 0xF0, opcode & 0xF0);
-}
 
 void initCharacters() {
-//0
-memory[0] = 0b11110000;
-memory[1] = 0b10010000;
-memory[2] = 0b10010000;
-memory[3] = 0b10010000;
-memory[4] = 0b11110000;
+  // 0
+  memory[0] = 0b11110000;
+  memory[1] = 0b10010000;
+  memory[2] = 0b10010000;
+  memory[3] = 0b10010000;
+  memory[4] = 0b11110000;
+  // 1
+  memory[5] = 0b00110000;
+  memory[6] = 0b00010000;
+  memory[7] = 0b00010000;
+  memory[8] = 0b00010000;
+  memory[9] = 0b00111000;
+  // 2
+  memory[10] = 0b11110000;
+  memory[11] = 0b00010000;
+  memory[12] = 0b11110000;
+  memory[13] = 0b10000000;
+  memory[14] = 0b11110000;
+  // 3
+  memory[15] = 0b11110000;
+  memory[16] = 0b00010000;
+  memory[17] = 0b11110000;
+  memory[18] = 0b10000000;
+  memory[19] = 0b11110000;
+  // 4
+  memory[20] = 0b10100000;
+  memory[21] = 0b10100000;
+  memory[22] = 0b11110000;
+  memory[23] = 0b00100000;
+  memory[24] = 0b00100000;
+  // 5
+  memory[25] = 0b11110000;
+  memory[26] = 0b10000000;
+  memory[27] = 0b11110000;
+  memory[28] = 0b00010000;
+  memory[29] = 0b11110000;
+  // 6
+  memory[30] = 0b11110000;
+  memory[31] = 0b10000000;
+  memory[32] = 0b11110000;
+  memory[33] = 0b10010000;
+  memory[34] = 0b11110000;
+  // 7 
+  memory[36] = 0b11110000;
+  memory[37] = 0b00010000;
+  memory[38] = 0b00010000;
+  memory[39] = 0b00010000;
+  memory[40] = 0b00010000;
+  // 8
+  memory[41] = 0b11110000;
+  memory[42] = 0b10010000;
+  memory[43] = 0b11110000;
+  memory[44] = 0b10010000;
+  memory[45] = 0b11110000;
+  // 9
+  memory[46] = 0b11110000;
+  memory[47] = 0b10010000;
+  memory[48] = 0b11110000;
+  memory[49] = 0b00010000;
+  memory[50] = 0b11110000;
+  // A
+  memory[51] = 0b11110000;
+  memory[52] = 0b10010000;
+  memory[53] = 0b11110000;
+  memory[54] = 0b10010000;
+  memory[55] = 0b10010000;
+  // B
+  memory[56] = 0b11110000;
+  memory[57] = 0b01010000;
+  memory[58] = 0b01110000;
+  memory[59] = 0b01010000;
+  memory[60] = 0b11110000;
+  // C
+  memory[61] = 0b11110000;
+  memory[62] = 0b10000000;
+  memory[63] = 0b10000000;
+  memory[64] = 0b10000000;
+  memory[65] = 0b11110000;
+  // D
+  memory[66] = 0b11110000;
+  memory[67] = 0b01010000;
+  memory[68] = 0b01010000;
+  memory[69] = 0b01010000;
+  memory[70] = 0b11110000;
+  // E
+  memory[71] = 0b11110000;
+  memory[72] = 0b10000000;
+  memory[73] = 0b11110000;
+  memory[74] = 0b10000000;
+  memory[75] = 0b11110000;
+  // F
+  memory[76] = 0b11110000;
+  memory[77] = 0b10000000;
+  memory[78] = 0b11110000;
+  memory[79] = 0b10000000;
+  memory[80] = 0b10000000;
 }
 
 int main(int argc, char* argv[]) {
@@ -155,6 +304,9 @@ int main(int argc, char* argv[]) {
   printf("PC is %#05x\n", pc);
   for(int i =0; i < 123; i++) {
     int temppc = pc;
+    if(timer > 0) {
+      timer -= 1;
+    }
     WORD opcode = getNextOpcode();
     switch (opcode & 0xF000) {
       case 0x0000: //: starts with 0
@@ -163,7 +315,7 @@ int main(int argc, char* argv[]) {
             printf("Clear Display\n");
             break;
           case 0x000E:// 0x00EE return
-            printf("Return\n");
+            returnFromSubroutine(opcode);
             break;
         }
         break;
@@ -174,7 +326,7 @@ int main(int argc, char* argv[]) {
         call(opcode);
         break;
       case 0x3000: // skip next instruction if Vx==NN
-        printf("if(V%#03x==%#04x)\n", opcode & 0xF00, opcode & 0xFF);
+        ifVxEqualsNN(opcode);
         break;
       case 0x4000: // skup next instruction if not equal
         printf("if(V%#03x!=%#04x)\n", opcode & 0xF00, opcode & 0xFF);
@@ -186,7 +338,7 @@ int main(int argc, char* argv[]) {
         setVxToNN(opcode);
         break;
       case 0x7000: // Adds NN to VX. (Carry flag is not changed
-        printf("Not done add V%#03x to %#04x\n", opcode & 0xF00, opcode & 0xFF);
+        addNNToVx(opcode);
         break;
       case 0x8000: // set Vx to NN
         switch(opcode & 0x000F) {
@@ -196,8 +348,11 @@ int main(int argc, char* argv[]) {
           case 0x0001:
             setVxOrVy(opcode);
             break;
+          case 0x0002:
+            setVxToVxAndVy(opcode);
+            break;
           default: 
-            printf("%#06x Unknown opcode: %#06x\n", temppc, opcode);
+            printf("%#06x Unknown opcode\n");
             break;
         }
         break;
@@ -207,12 +362,25 @@ int main(int argc, char* argv[]) {
       case 0xD000:
         dxyn(opcode);
         break;
+      case 0xE000:
+        switch(opAcode & 0x00F0){
+          case 0x0090:
+            skipIfKeyPressed(opcode);
+            break;
+          case 0x00A0:
+            printf("Opcode not handled\n");
+            break;
+          default:
+            printf("Unknown opcode\n");
+            break;
+        }
+        break;
       case 0xF000:
         switch(opcode & 0x00F0) {
           case 0x0000:
             switch(opcode & 0x000F){
-              case 0x0007://FX07	Timer	Vx = get_delay()	Sets VX to the value of the delay timer.
-                printf("Setting Vx to value of delay timer\n");
+              case 0x0007:// FX07	Timer	Vx = get_delay()	Sets VX to the value of the delay timer.
+                setVxToDelay(opcode);
                 break;
               case 0x000A:
                 //FX0A	KeyOp	Vx = get_key()	A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
@@ -222,10 +390,11 @@ int main(int argc, char* argv[]) {
                 printf("Known instruction Pattern 0xF_0_\n");
                 break;
             }
+            break;
           case 0x0010:
-            switch(opcode & 0x00F0) {
+            switch(opcode & 0x000F) {
               case 0x0005:// FX15	Timer	delay_timer(Vx)	Sets the delay timer to VX.
-                printf("setting timer delay to Vx\n");
+                setDelayTimer(opcode);
                 break;
               case 0x0008://FX18	Sound	sound_timer(Vx)	Sets the sound timer to VX.
                 printf("setting sound timer to Vx\n");
@@ -234,9 +403,10 @@ int main(int argc, char* argv[]) {
                 printf("I += Vx");
                 break;
               default:
-                printf("Known instruction Pattern 0xF_1_\n");
+                printf("Unknown opcode\n");
                 break;
             }
+            break;
           case 0x0020://FX29	MEM	I=sprite_addr[Vx]	Sets I to the location of the sprite for the
             setSpriteAddr(opcode);
             break;
@@ -252,7 +422,7 @@ int main(int argc, char* argv[]) {
         }
         break;
       default: 
-        printf("%#06x Unknown opcode: %#06x\n", temppc, opcode);
+        printf("Unknown opcode\n");
         break;
     }
   }
