@@ -1,8 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 typedef unsigned char BYTE;
 typedef unsigned short int WORD;
+
+const int LOOPS = 1800;
+const char OPEN = ' ';
+const char *CLOSED = "█";
 
 BYTE memory[0xFFF];
 BYTE V[16];
@@ -16,7 +21,7 @@ BYTE key[16];
 
 int timer = 0;
 
-WORD getNextOpcode();
+WORD getOpcode();
 
 int getVnum(WORD opcode, int mask, int shift) {
   int vNum = opcode & mask;
@@ -27,6 +32,17 @@ int getDelay() {
   return timer;
 }
 
+// 00E0	Display	disp_clear()	Clears the screen.
+void clearDisplay(WORD opcode) {
+  printf("Clear Display\n");
+  for(int x = 0; x < 64; x++) {
+    for(int y = 0; y < 32; y++) {
+      videoMemory[x][y] = 0;
+    }
+  }
+}
+
+// 00EE	Flow	return;	Returns from a subroutine.
 void returnFromSubroutine(WORD opcode) {
   pc = stack[--sp];
   printf("Return new pc is %#06x\n", pc);
@@ -48,7 +64,27 @@ void call(WORD opcode) {
 //3XNN	Cond	if(Vx==NN)	Skips the next instruction if VX equals NN. (Usually the next instruction is a jump to skip a code block)
 void ifVxEqualsNN(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
+  printf("Skip if register = V%d if(%#04x==%#04x)\n", vX, V[vX], opcode & 0xFF);
+  if(V[vX] == (opcode & 0xFF)) {
+    pc += 2;
+  }
+}
+
+// 4XNN	Cond	if(Vx!=NN)	Skips the next instruction if VX doesn't equal NN. (Usually the next
+//instruction is a jump to skip a code block)
+void ifVxNotEqualsNN(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  printf("V%d if(%d!=%#04x)\n", vX, V[vX], opcode & 0xFF);
+  printf("PC %#06x\n", pc);
+  if(V[vX] != (opcode & 0xFF)) {
+    pc += 2;
+  }
+}
+// 5XY0	Cond	if(Vx==Vy)	Skips the next instruction if VX equals VY. (Usually the next instruction is a jump to skip a code block)
+void ifVxEqualsVY(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
   printf("V%d if(%d==%#04x)\n", vX, V[vX], opcode & 0xFF);
+  printf("PC %#06x\n", pc);
   if(V[vX] == (opcode & 0xFF)) {
     pc += 2;
   }
@@ -67,7 +103,15 @@ void addNNToVx(WORD opcode) {
   printf("add V%d to %#04x\n", vX, opcode & 0xFF);
   V[vX] += (opcode & 0xFF);
 }
-//
+
+// 8XY0	Assign	Vx=Vy	Sets VX to the value of VY.
+void setVxToVy(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  int vY = getVnum(opcode, 0x00F0, 4);
+  printf("set V%d %d to V%d %d\n", vX, V[vX], vY, V[vY]);
+  V[vX] = V[vY];
+}
+
 // 8XY1	BitOp	Vx=Vx|Vy	Sets VX to VX or VY. (Bitwise OR operation)
 void setVxOrVy(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
@@ -77,11 +121,45 @@ void setVxOrVy(WORD opcode) {
 }
 
 // 8XY2	BitOp	Vx=Vx&Vy	Sets VX to VX and VY. (Bitwise AND operation)
-void setVxToVxAndVy(opcode) {
-    int vX = getVnum(opcode, 0X0F00, 8);
-    int vY = getVnum(opcode, 0X00F0, 4);
-    printf("set V%d to V%d and V%d\n", vX, V[vX], V[vY]);
-    V[vX] = V[vX] & V[vY];
+void setVxToVxAndVy(WORD opcode) {
+  int vX = getVnum(opcode, 0X0F00, 8);
+  int vY = getVnum(opcode, 0X00F0, 4);
+  printf("set V%d to V%d and V%d (V%d = %d & %d)\n", vX, vX, vY, vX, V[vX], V[vY]);
+  V[vX] = V[vX] & V[vY];
+}
+
+// 8XY3	BitOp	Vx=Vx^Vy	Sets VX to VX xor VY
+void setVxToVxXorVy(WORD opcode) {
+  int vX = getVnum(opcode, 0X0F00, 8);
+  int vY = getVnum(opcode, 0X00F0, 4);
+  printf("set V%d to V%d and V%d (V%d = %d & %d)\n", vX, vX, vY, vX, V[vX], V[vY]);
+  V[vX] = V[vX] ^ V[vY];
+}
+
+// 8XY4	Math	Vx += Vy	Adds VY to VX. VF is set to 1 when there's a carry, and to 0 when there isn't.
+void setVxToVxAddVy(WORD opcode) { 
+  int vX = getVnum(opcode, 0X0F00, 8);
+  int vY = getVnum(opcode, 0X00F0, 4);
+  printf("set V%d to V%d and V%d V%d = %d + %d\n", vX, vX, vY, vX, V[vX], V[vY]);
+  V[vX] = V[vX] + V[vY];
+}
+// 8XY5	Math	Vx -= Vy	VY is subtracted from VX. VF is set to 0 when there's a borrow, and 1 when there isn't.
+void setVxEqualsMinusVy(WORD opcode) {
+  int vX = getVnum(opcode, 0X0F00, 8);
+  int vY = getVnum(opcode, 0X00F0, 4);
+  printf("set V%d to V%d and V%d ( V%d = %d - %d)\n", vX, vX, vY, vX, V[vX], V[vY]);
+  V[vX] = V[vX] - V[vY];
+}
+//8XY6	BitOp	Vx=Vy>>1	Shifts VY right by one and stores the result to VX (VY remains unchanged).
+//VF is set to the value of the least significant bit of VY before the shift.
+void setVxToVyShiftedRightByOne(WORD opcode) {
+  int vX = getVnum(opcode, 0X0F00, 8);
+  int vY = getVnum(opcode, 0X00F0, 4);
+  int lsb = V[vY] & 1;
+  V[0xF] = lsb;
+  printf("shifting V%#03x to V%#03x %d right by 1", vX, vY, V[vY]);
+  V[vX] = V[vX] >> 1;
+  printf(" result %d\n", V[vX]);
 }
 
 // ANNN	MEM	I = NNN	Sets I to the address NNN.
@@ -90,16 +168,28 @@ void setIToNNN(WORD opcode) {
   I = opcode & 0xFFF;
 }
 
+// CXNN	Rand	Vx=rand()&NN	Sets VX to the result of a bitwise and operation on a random number (Typically: 0 to 255) and NN.
+void setVxToRand(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  int nn = opcode & 0x00FF;
+  int randNumber = rand() % 255;
+  int result = randNumber & nn;
+  V[vX] = result;
+  printf("set V%d to $%d randNumber: %d, nn: %#04x\n" , vX, result, randNumber, nn);
+}
+
 // DXYN	Disp	draw(Vx,Vy,N)
 // Draws a sprite at coordinate (VX, VY) that has a width of 8 pixels and a height of N pixels. Each
 // row of 8 pixels is read as bit-coded starting from memory location I; I value doesn’t change
 // after the execution of this instruction. As described above, VF is set to 1 if any screen pixels
 // are flipped from set to unset when the sprite is drawn, and to 0 if that doesn’t happen
 void dxyn(WORD opcode) {
+  nanosleep((const struct timespec[]){{0, 1000000L}}, NULL);
   int vX = getVnum(opcode, 0x0F00, 8);
   int vY = getVnum(opcode, 0x00F0, 4);
   int height = opcode & 0x000F;
-  printf("Drawing at X:%d Y:%d height:%d from registers V%d, V%d\n", V[vX], V[vY], height, vX, vY);
+  V[0xF] = 0;
+  printf("Drawing I %#06x at X:%d Y:%d height:%d from registers V%d, V%d\n", I, V[vX], V[vY], height, vX, vY);
   for (int yline = 0; yline < height; yline++) {
     BYTE line = memory[I+yline];
     // get each pixel in 8 bit line;
@@ -117,19 +207,17 @@ void dxyn(WORD opcode) {
     }
   }
 
-  char open = '_';
-  char closed = '0';
   for(int y = 0; y < 32; y++) {
     for(int i = 0; i < 64; i++) {
       if (videoMemory[i][y]) {
-        printf("%c", closed);
+        fprintf(stderr, "%s", CLOSED);
       } else {
-        printf("%c", open);
+        fprintf(stderr, "%c", OPEN);
       }
     }
-    printf("\n");
+    fprintf(stderr, "\n");
   }
-  printf("\n");
+  fprintf(stderr, "\n");
 }
 
 //EX9E	KeyOp	if(key()==Vx)	Skips the next instruction if the key stored in VX
@@ -137,13 +225,26 @@ void dxyn(WORD opcode) {
 void skipIfKeyPressed(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
   printf("Skipping if key in V%d is %d\n", vX, V[vX]);
+  printf("Not handled assuming 5 pressed\n");
+  if(V[vX] == 5) {
+    pc += 2;
+  }
+}
+
+//EXA1	KeyOp	if(key()!=Vx)	Skips the next instruction if the key stored in VX isn't pressed.
+//(Usually the next instruction is a jump to skip a code block)
+void skipIfKeyNotPressed(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  printf("Skipping if key in V%d is not  %d\n", vX, V[vX]);
+  printf("Key not pressed not handled\n");
+  pc += 2;
 }
 
 // FX07	Timer	Vx = get_delay()	Sets VX to the value of the delay timer.
 void setVxToDelay(WORD opcode) {
-  int vXi = getVnum(opcode, 0x0F00, 8);
-  V[vXi] = getDelay();
-  printf("Setting V%d to value of delay timer %d\n", vXi, V[vXi]);
+  int vX = getVnum(opcode, 0x0F00, 8);
+  V[vX] = getDelay();
+  printf("Setting V%d to value of delay timer %d\n", vX, V[vX]);
 }
 
 // FX15	Timer	delay_timer(Vx)	Sets the delay timer to VX.
@@ -153,12 +254,31 @@ void setDelayTimer(WORD opcode) {
   timer = V[vX];
 }
 
+// FX0A	KeyOp	Vx = get_key()	A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
+void waitForKeyPressStoreInVx(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  printf("Waiting for key press storing in V%d\n", vX);
+  int c;
+  while( (c = getchar()) == '\n') {}
+//TODO add error handling
+  printf("pressed orig %d\n", c);
+  int val = c - '0';
+  printf("pressed %d\n", val);
+  V[vX] = val;
+}
+
+// FX1E	MEM	I +=Vx	Adds VX to I.[3]
+void setIToIPlusVx(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  printf("I%#06x  += V%d (%d += %d)\n", I, vX, I, V[vX]);
+  I += V[vX];
+}
 //FX29	MEM	I=sprite_addr[Vx]	Sets I to the location of the sprite for the character in VX. Characters 0-F (in hexadecimal) are represented by a 4x5 font.
 void setSpriteAddr(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
   printf("Sets I register to the locaition of the sprite for the character in v%d \n", vX);
-  printf("Character is %d\n", V[vX]);
-  I = 0;
+  printf("Character is %d location is %d\n", V[vX], V[vX]*5 );
+  I = (V[vX] * 5);
 }
 
 //FX33	BCD	set_BCD(Vx); *(I+0)=BCD(3); *(I+1)=BCD(2); *(I+2)=BCD(1);
@@ -174,12 +294,22 @@ void setBCD(WORD opcode) {
   memory[I+2] = units;
 }
 
+// FX55 MEM reg_dump(Vx,&I) Stores V0 to VX (including VX) in memory starting at address I. I is
+// increased by 1 for each value written
+void registerDump(WORD opcode) {
+  int vX = getVnum(opcode, 0x0F00, 8);
+  printf("Stores V0 to V%#03x in memory starting at addres I %d\n", vX, I);
+  for(int i = 0; i <= vX; i++) {
+    memory[I++] = V[i];
+  }
+}
+
 //FX65	MEM	reg_load(Vx,&I)	 Fills V0 to VX (including VX) with values from memory starting at address I. I is increased by 1 for each value written.
 void registerLoad(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
-  printf("Fills V0 to Vx with values from memory starting at addres i\n");
-  for(int i =0; i < vX; i++) {
-    memory[I++] = V[i];
+  printf("Fills V0 to V%#03x with values from memory starting at addres I %d\n", vX, I);
+  for(int i = 0; i <= vX; i++) {
+     V[i] = memory[I++];
   }
 }
 
@@ -207,7 +337,7 @@ void initCharacters() {
   memory[15] = 0b11110000;
   memory[16] = 0b00010000;
   memory[17] = 0b11110000;
-  memory[18] = 0b10000000;
+  memory[18] = 0b00010000;
   memory[19] = 0b11110000;
   // 4
   memory[20] = 0b10100000;
@@ -228,59 +358,59 @@ void initCharacters() {
   memory[33] = 0b10010000;
   memory[34] = 0b11110000;
   // 7 
-  memory[36] = 0b11110000;
+  memory[35] = 0b11110000;
+  memory[36] = 0b00010000;
   memory[37] = 0b00010000;
   memory[38] = 0b00010000;
   memory[39] = 0b00010000;
-  memory[40] = 0b00010000;
   // 8
-  memory[41] = 0b11110000;
-  memory[42] = 0b10010000;
-  memory[43] = 0b11110000;
-  memory[44] = 0b10010000;
-  memory[45] = 0b11110000;
+  memory[40] = 0b11110000;
+  memory[41] = 0b10010000;
+  memory[42] = 0b11110000;
+  memory[43] = 0b10010000;
+  memory[44] = 0b11110000;
   // 9
-  memory[46] = 0b11110000;
-  memory[47] = 0b10010000;
-  memory[48] = 0b11110000;
-  memory[49] = 0b00010000;
-  memory[50] = 0b11110000;
+  memory[45] = 0b11110000;
+  memory[46] = 0b10010000;
+  memory[47] = 0b11110000;
+  memory[48] = 0b00010000;
+  memory[49] = 0b11110000;
   // A
-  memory[51] = 0b11110000;
-  memory[52] = 0b10010000;
-  memory[53] = 0b11110000;
+  memory[50] = 0b11110000;
+  memory[51] = 0b10010000;
+  memory[52] = 0b11110000;
+  memory[53] = 0b10010000;
   memory[54] = 0b10010000;
-  memory[55] = 0b10010000;
   // B
-  memory[56] = 0b11110000;
-  memory[57] = 0b01010000;
-  memory[58] = 0b01110000;
-  memory[59] = 0b01010000;
-  memory[60] = 0b11110000;
+  memory[55] = 0b11110000;
+  memory[56] = 0b01010000;
+  memory[57] = 0b01110000;
+  memory[58] = 0b01010000;
+  memory[59] = 0b11110000;
   // C
-  memory[61] = 0b11110000;
+  memory[60] = 0b11110000;
+  memory[61] = 0b10000000;
   memory[62] = 0b10000000;
   memory[63] = 0b10000000;
-  memory[64] = 0b10000000;
-  memory[65] = 0b11110000;
+  memory[64] = 0b11110000;
   // D
-  memory[66] = 0b11110000;
+  memory[65] = 0b11110000;
+  memory[66] = 0b01010000;
   memory[67] = 0b01010000;
   memory[68] = 0b01010000;
-  memory[69] = 0b01010000;
-  memory[70] = 0b11110000;
+  memory[69] = 0b11110000;
   // E
-  memory[71] = 0b11110000;
-  memory[72] = 0b10000000;
-  memory[73] = 0b11110000;
-  memory[74] = 0b10000000;
-  memory[75] = 0b11110000;
+  memory[70] = 0b11110000;
+  memory[71] = 0b10000000;
+  memory[72] = 0b11110000;
+  memory[73] = 0b10000000;
+  memory[74] = 0b11110000;
   // F
-  memory[76] = 0b11110000;
-  memory[77] = 0b10000000;
-  memory[78] = 0b11110000;
+  memory[75] = 0b11110000;
+  memory[76] = 0b10000000;
+  memory[77] = 0b11110000;
+  memory[78] = 0b10000000;
   memory[79] = 0b10000000;
-  memory[80] = 0b10000000;
 }
 
 int main(int argc, char* argv[]) {
@@ -300,19 +430,20 @@ int main(int argc, char* argv[]) {
   }
   fread( &memory[0x200], 0xFFF, 1, in);
   fclose(in);
+
   initCharacters();
+  srand(time(NULL));
   printf("PC is %#05x\n", pc);
-  for(int i =0; i < 123; i++) {
-    int temppc = pc;
+  for(int i =0; i < LOOPS; i++) {
     if(timer > 0) {
       timer -= 1;
     }
-    WORD opcode = getNextOpcode();
+    WORD opcode = getOpcode();
     switch (opcode & 0xF000) {
       case 0x0000: //: starts with 0
         switch(opcode & 0x000F) {
           case 0x0000: // 0x00E0 Clear display
-            printf("Clear Display\n");
+            clearDisplay(opcode);
             break;
           case 0x000E:// 0x00EE return
             returnFromSubroutine(opcode);
@@ -328,11 +459,11 @@ int main(int argc, char* argv[]) {
       case 0x3000: // skip next instruction if Vx==NN
         ifVxEqualsNN(opcode);
         break;
-      case 0x4000: // skup next instruction if not equal
-        printf("if(V%#03x!=%#04x)\n", opcode & 0xF00, opcode & 0xFF);
+      case 0x4000: // skip next instruction if not equal
+        ifVxNotEqualsNN(opcode);
         break;
       case 0x5000: // skip next instruction if Vx == Vy
-        printf("if(V%#03x==V%#03x)\n", opcode & 0xF00, opcode & 0xF0);
+        ifVxEqualsVY(opcode);
         break;
       case 0x6000: // set Vx to NN
         setVxToNN(opcode);
@@ -343,7 +474,7 @@ int main(int argc, char* argv[]) {
       case 0x8000: // set Vx to NN
         switch(opcode & 0x000F) {
           case 0x0000:
-            printf("set V%#03x to V%#03x\n", opcode & 0xF00, opcode & 0xF0);
+            setVxToVy(opcode);
             break;
           case 0x0001:
             setVxOrVy(opcode);
@@ -351,24 +482,39 @@ int main(int argc, char* argv[]) {
           case 0x0002:
             setVxToVxAndVy(opcode);
             break;
+          case 0x0003:
+            setVxToVxXorVy(opcode);
+            break;
+          case 0x0004:
+            setVxToVxAddVy(opcode);
+            break;
+          case 0x0005:
+            setVxEqualsMinusVy(opcode);
+            break;
+          case 0x0006:
+            setVxToVyShiftedRightByOne(opcode);
+            break;
           default: 
-            printf("%#06x Unknown opcode\n");
+            printf("Unknown opcode\n");
             break;
         }
         break;
       case 0xA000:
         setIToNNN(opcode);
         break;
+      case 0xC000:
+        setVxToRand(opcode);
+        break;
       case 0xD000:
         dxyn(opcode);
         break;
       case 0xE000:
-        switch(opAcode & 0x00F0){
+        switch(opcode & 0x00F0){
           case 0x0090:
             skipIfKeyPressed(opcode);
             break;
           case 0x00A0:
-            printf("Opcode not handled\n");
+            skipIfKeyNotPressed(opcode);
             break;
           default:
             printf("Unknown opcode\n");
@@ -383,8 +529,8 @@ int main(int argc, char* argv[]) {
                 setVxToDelay(opcode);
                 break;
               case 0x000A:
-                //FX0A	KeyOp	Vx = get_key()	A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
-                printf("Waiting for keypress and storing in VX\n");
+                waitForKeyPressStoreInVx(opcode);
+                break;
                 break;
               default:
                 printf("Known instruction Pattern 0xF_0_\n");
@@ -400,7 +546,7 @@ int main(int argc, char* argv[]) {
                 printf("setting sound timer to Vx\n");
                 break;
               case 0x000E://FX1E	MEM	I +=Vx	Adds VX to I.[3]
-                printf("I += Vx");
+                setIToIPlusVx(opcode);
                 break;
               default:
                 printf("Unknown opcode\n");
@@ -414,7 +560,7 @@ int main(int argc, char* argv[]) {
             setBCD(opcode);
             break;
           case 0x0050:// FX55	MEM	reg_dump(Vx,&I)	Stores V0 to VX (including VX) in memory starting at address I. I is increased by 1 for each value written
-            printf("Stores V0 to Vx in memory starting at adress I \n");
+            registerDump(opcode);
             break;
           case 0x0060://FX65	MEM	reg_load(Vx,&I)	Fills V0 to VX (including VX) with values from memory starting at address I. I is increased by 1 for each value written
             registerLoad(opcode);
@@ -428,7 +574,7 @@ int main(int argc, char* argv[]) {
   }
 }
 
-WORD getNextOpcode() {
+WORD getOpcode() {
   printf("%#06x ", pc);
   WORD opcode = 0;
   opcode = memory[pc++];
