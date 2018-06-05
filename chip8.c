@@ -1,13 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include "chip8.h"
+#include "./stdout.h"
 
-typedef unsigned char BYTE;
-typedef unsigned short int WORD;
 
-const int LOOPS = 1800;
-const char OPEN = ' ';
-const char *CLOSED = "█";
+const int LOOPS = 99900;
+const struct timespec sleepTime= {0, 9000000L};
 
 BYTE memory[0xFFF];
 BYTE V[16];
@@ -184,7 +183,8 @@ void setVxToRand(WORD opcode) {
 // after the execution of this instruction. As described above, VF is set to 1 if any screen pixels
 // are flipped from set to unset when the sprite is drawn, and to 0 if that doesn’t happen
 void dxyn(WORD opcode) {
-  nanosleep((const struct timespec[]){{0, 1000000L}}, NULL);
+
+  nanosleep(&sleepTime, NULL);
   int vX = getVnum(opcode, 0x0F00, 8);
   int vY = getVnum(opcode, 0x00F0, 4);
   int height = opcode & 0x000F;
@@ -207,17 +207,8 @@ void dxyn(WORD opcode) {
     }
   }
 
-  for(int y = 0; y < 32; y++) {
-    for(int i = 0; i < 64; i++) {
-      if (videoMemory[i][y]) {
-        fprintf(stderr, "%s", CLOSED);
-      } else {
-        fprintf(stderr, "%c", OPEN);
-      }
-    }
-    fprintf(stderr, "\n");
-  }
-  fprintf(stderr, "\n");
+  update(64, 32, videoMemory);
+
 }
 
 //EX9E	KeyOp	if(key()==Vx)	Skips the next instruction if the key stored in VX
