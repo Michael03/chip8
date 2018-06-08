@@ -2,13 +2,14 @@
 #include <stdlib.h>
 #include <time.h>
 #include "chip8.h"
-#include "./stdout.h"
 
+const struct timespec sleepTime= {0, 16000000L};
+//struct chip8 {
+//} chip8
 
-const int LOOPS = 99900;
-const struct timespec sleepTime= {0, 9000000L};
-
+IO io;
 BYTE memory[0xFFF];
+
 BYTE V[16];
 WORD I;
 WORD pc;
@@ -74,7 +75,6 @@ void ifVxEqualsNN(WORD opcode) {
 void ifVxNotEqualsNN(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
   printf("V%d if(%d!=%#04x)\n", vX, V[vX], opcode & 0xFF);
-  printf("PC %#06x\n", pc);
   if(V[vX] != (opcode & 0xFF)) {
     pc += 2;
   }
@@ -83,7 +83,6 @@ void ifVxNotEqualsNN(WORD opcode) {
 void ifVxEqualsVY(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
   printf("V%d if(%d==%#04x)\n", vX, V[vX], opcode & 0xFF);
-  printf("PC %#06x\n", pc);
   if(V[vX] == (opcode & 0xFF)) {
     pc += 2;
   }
@@ -161,6 +160,17 @@ void setVxToVyShiftedRightByOne(WORD opcode) {
   printf(" result %d\n", V[vX]);
 }
 
+//9XY0	Cond	if(Vx!=Vy)	Skips the next instruction if VX doesn't equal VY. (Usually the next instruction is a jump to skip a code block)
+void skipIfVxNotEqualsVy(WORD opcode) {
+  int vX = getVnum(opcode, 0X0F00, 8);
+  int vY = getVnum(opcode, 0X00F0, 4);
+  printf("skip if not equal V%d,  V%d  ( %d != %d)\n", vX, vY, V[vX], V[vY]);
+  if(vX != vY) {
+    pc += 2;
+  }
+  
+}
+
 // ANNN	MEM	I = NNN	Sets I to the address NNN.
 void setIToNNN(WORD opcode) {
   printf("Set I to %#05x\n",  opcode & 0xFFF);
@@ -207,7 +217,7 @@ void dxyn(WORD opcode) {
     }
   }
 
-  update(64, 32, videoMemory);
+  io.update(64,32,videoMemory);
 
 }
 
@@ -216,8 +226,28 @@ void dxyn(WORD opcode) {
 void skipIfKeyPressed(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
   printf("Skipping if key in V%d is %d\n", vX, V[vX]);
-  printf("Not handled assuming 5 pressed\n");
-  if(V[vX] == 5) {
+  int c = io.getCharNb();
+  printf("Key is %c , %d\n", c, c);
+ int m = 999;
+ if(c == 49) m = 1;
+ if(c == 50) m = 2;
+ if(c == 51) m = 3;
+ if(c == 52) m = 12;
+ if(c == 113) m = 4;
+ if(c == 119) m = 5;
+ if(c == 101) m = 6;
+ if(c == 114) m = 13;
+ if(c == 97) m = 7;
+ if(c == 115) m = 8;
+ if(c == 100) m = 9;
+ if(c == 102) m = 14;
+ if(c == 122) m = 10;
+ if(c == 120) m = 0;
+ if(c == 99) m = 11;
+ if(c == 118) m = 15;
+
+  printf("Mapped is %d\n", m);
+  if(V[vX] == m) {
     pc += 2;
   }
 }
@@ -226,9 +256,31 @@ void skipIfKeyPressed(WORD opcode) {
 //(Usually the next instruction is a jump to skip a code block)
 void skipIfKeyNotPressed(WORD opcode) {
   int vX = getVnum(opcode, 0x0F00, 8);
-  printf("Skipping if key in V%d is not  %d\n", vX, V[vX]);
-  printf("Key not pressed not handled\n");
-  pc += 2;
+  printf("Skipping if key in V%d is not %d\n", vX, V[vX]);
+  int c = io.getCharNb();
+  printf("Key is %c , %d\n", c, c);
+ int m = 999;
+ if(c == 49) m = 1;
+ if(c == 50) m = 2;
+ if(c == 51) m = 3;
+ if(c == 52) m = 12;
+ if(c == 113) m = 4;
+ if(c == 119) m = 5;
+ if(c == 101) m = 6;
+ if(c == 114) m = 13;
+ if(c == 97) m = 7;
+ if(c == 115) m = 8;
+ if(c == 100) m = 9;
+ if(c == 102) m = 14;
+ if(c == 122) m = 10;
+ if(c == 120) m = 0;
+ if(c == 99) m = 11;
+ if(c == 118) m = 15;
+
+  printf("Mapped is %d\n", m);
+  if(V[vX] != m) {
+    pc += 2;
+  }
 }
 
 // FX07	Timer	Vx = get_delay()	Sets VX to the value of the delay timer.
@@ -405,6 +457,9 @@ void initCharacters() {
 }
 
 int main(int argc, char* argv[]) {
+  io.update = stdio_update;
+  io.init = stdio_init;
+  io.getCharNb = stdio_getCharNb;
   if(argc < 2) {
     printf("Usage emulator <romfilename>");
     exit(1);
@@ -424,8 +479,9 @@ int main(int argc, char* argv[]) {
 
   initCharacters();
   srand(time(NULL));
+
   printf("PC is %#05x\n", pc);
-  for(int i =0; i < LOOPS; i++) {
+  for(;;) {
     if(timer > 0) {
       timer -= 1;
     }
@@ -489,6 +545,9 @@ int main(int argc, char* argv[]) {
             printf("Unknown opcode\n");
             break;
         }
+        break;
+      case 0x9000:
+        skipIfVxNotEqualsVy(opcode);
         break;
       case 0xA000:
         setIToNNN(opcode);

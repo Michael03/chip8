@@ -4,10 +4,10 @@ emulator: chip8.o stdout.o
 	cc -ggdb -o $@ $^
 
 chip8.o: chip8.c
-	gcc -c $<
+	cc -c $<
 
 stdout.o: stdout.c
-	gcc -c $<
+	cc -c $<
 
 build:
 	cc -ggdb -o emulator  chip8.c 
@@ -18,6 +18,7 @@ clean:
 	rm *.o
 	rm emulator
 
+.PHONY: run
 run:
 	./emulator PONG.ch8
 
