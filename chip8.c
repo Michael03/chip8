@@ -139,7 +139,7 @@ void setVxToVxAddVy(WORD opcode) {
 void setVxEqualsMinusVy(WORD opcode) {
   int vX = getVnum(opcode, 0X0F00, 8);
   int vY = getVnum(opcode, 0X00F0, 4);
-  chip8.V[0xF] = chip8.V[vX] <= chip8.V[vY];
+  chip8.V[0xF] = chip8.V[vX] >= chip8.V[vY];
   printf("set V%d to V%d and V%d ( V%d = %d - %d)\n", vX, vX, vY, vX, chip8.V[vX], chip8.V[vY]);
   chip8.V[vX] = chip8.V[vX] - chip8.V[vY];
 }
@@ -207,7 +207,7 @@ void setVxToRand(WORD opcode) {
 // are flipped from set to unset when the sprite is drawn, and to 0 if that doesn’t happen
 void dxyn(WORD opcode) {
 
-  nanosleep(&sleepTime, NULL);
+  //nanosleep(&sleepTime, NULL);
   int vX = getVnum(opcode, 0x0F00, 8);
   int vY = getVnum(opcode, 0x00F0, 4);
   int height = opcode & 0x000F;
