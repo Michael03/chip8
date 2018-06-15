@@ -4,10 +4,10 @@ emulator: chip8.o stdout.o
 	cc -ggdb -o $@ $^
 
 chip8.o: chip8.c
-	cc -c $<
+	cc -ggdb -c $<
 
 stdout.o: stdout.c
-	cc -c $<
+	cc -ggdb -c $<
 
 build:
 	cc -ggdb -o emulator  chip8.c 
