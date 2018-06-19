@@ -22,6 +22,9 @@ clean:
 run:
 	./emulator PONG.ch8
 
+assembler: assembler.c
+	cc -Wall -Wextra -ggdb $< -o $@
+
 #$@: the target filename.
 #$*: the target filename without the file extension.
 #$<: the first prerequisite filename.
